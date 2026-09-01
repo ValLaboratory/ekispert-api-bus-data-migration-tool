@@ -1,0 +1,4 @@
+id,old_code,serialize_data,via_list,date,time,search_type,condition_detail,origin,destination,route_type,detail_route
+M-1,841234,,,,,,,,,,
+M-2,,＜旧経路シリアライズデータ＞,841234:841236,20260801,1200,departure,,,,,
+M-3,,,,20260901,1200,,,1514600,1514700,assignDetailRoute,みどり町／サンプルバス※旧:サンプルバス※旧・系統１:Down:さくら競技場／サンプルバス※旧
