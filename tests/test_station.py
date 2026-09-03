@@ -10,7 +10,7 @@ from ekispert_bus_data_migration.migrate.common import (
 from ekispert_bus_data_migration.migrate.station import StationInput, station
 
 station_mapping_csv = (
-    "old_code,new_code,old_name,new_name\n"
+    "旧コード,新コード,旧バス停名(フル),新バス停名(フル)\n"
     "841234,1514600,みどり町／サンプルバス※旧,みどり町／サンプルバス\n"
     "841235,1514601,こもれび橋／サンプルバス※旧,こもれび橋／サンプルバス\n"
     "849999,1514777,こもれび橋／サンプルバス※旧,こもれび橋北／サンプルバス\n"

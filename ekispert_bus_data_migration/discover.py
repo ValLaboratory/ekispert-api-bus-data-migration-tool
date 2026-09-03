@@ -91,13 +91,8 @@ def looks_like_mapping(path):
         header = next(reader)
     except StopIteration:
         return False
-    found = set()
-    for h in header:
-        h = h.strip().lower()
-        for col, candidates in mapping.column_candidates.items():
-            if h in [c.lower() for c in candidates]:
-                found.add(col)
-    return {"old_code", "new_code", "old_name", "new_name"} <= found
+    headers = {h.strip().lower() for h in header}
+    return all(name.lower() in headers for name in mapping.column_names.values())
 
 
 def unique_paths(paths):

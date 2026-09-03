@@ -8,11 +8,11 @@ from dataclasses import dataclass
 
 from .csvio import _BOM_CHAR, read_utf8_file
 
-column_candidates = {
-    "old_code": ["旧コード", "旧バス停コード", "old_code"],
-    "new_code": ["新コード", "新バス停コード", "new_code"],
-    "old_name": ["旧バス停名(フル)", "旧バス停名（フル）", "旧バス停名", "old_name"],
-    "new_name": ["新バス停名(フル)", "新バス停名（フル）", "新バス停名", "new_name"],
+column_names = {
+    "old_code": "旧コード",
+    "new_code": "新コード",
+    "old_name": "旧バス停名(フル)",
+    "new_name": "新バス停名(フル)",
 }
 
 
@@ -135,8 +135,8 @@ def parse(text):
         idx[name.strip().lower()] = i
 
     col_idx = {}
-    for col, candidates in column_candidates.items():
-        col_idx[col] = _resolve_column(idx, candidates)
+    for col, name in column_names.items():
+        col_idx[col] = _resolve_column(idx, name)
 
     t = Table()
     for rec in reader:
@@ -157,8 +157,7 @@ def parse(text):
     return t
 
 
-def _resolve_column(idx, candidates):
-    for c in candidates:
-        if c.lower() in idx:
-            return idx[c.lower()]
-    raise RuntimeError("対応表に列 %s のいずれかが見つかりません" % "/".join(candidates))
+def _resolve_column(idx, name):
+    if name.lower() in idx:
+        return idx[name.lower()]
+    raise RuntimeError("対応表に列 %s が見つかりません" % name)

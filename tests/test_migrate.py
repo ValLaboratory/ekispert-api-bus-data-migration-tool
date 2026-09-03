@@ -434,7 +434,7 @@ def test_serialize_stops_when_via_list_name_is_ambiguous(start_server):
         return 200, NEW_SEARCH_RESPONSE
 
     table = mapping.parse(
-        "old_code,new_code,old_name,new_name\n"
+        "旧コード,新コード,旧バス停名(フル),新バス停名(フル)\n"
         "841234,1514600,みどり町／サンプルバス※旧,みどり町／サンプルバス\n"
         "841235,1514601,こもれび橋／サンプルバス※旧,こもれび橋／サンプルバス\n"
         "849999,1514777,こもれび橋／サンプルバス※旧,こもれび橋北／サンプルバス\n"
@@ -457,7 +457,7 @@ def test_serialize_stops_when_via_list_name_is_ambiguous(start_server):
 
 
 AMBIGUOUS_MAPPING_CSV = (
-    "old_code,new_code,old_name,new_name\n"
+    "旧コード,新コード,旧バス停名(フル),新バス停名(フル)\n"
     "841234,1514600,みどり町／サンプルバス※旧,みどり町／サンプルバス\n"
     "841500,1514900,あおば台／サンプルバス※旧,あおば台／サンプルバス\n"
     "841500,1514901,あおば台南／サンプルバス※旧,あおば台南／サンプルバス\n"

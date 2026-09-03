@@ -42,11 +42,7 @@ def write_profile(tmp_path, **overrides):
 
 
 def test_result_csv_is_not_mistaken_for_mapping(tmp_path):
-    """結果CSVは old_code / new_code 列を持つが、対応表として使ってはならない。
-
-    中身は変換できた行だけの部分集合で old_name も空のため、対応表として
-    読み込むと黙って誤った移行結果になる。
-    """
+    """結果CSVをファイル名で対応表候補から除外する。"""
     p = write(
         tmp_path,
         output_station,
@@ -54,6 +50,20 @@ def test_result_csv_is_not_mistaken_for_mapping(tmp_path):
         "001,変換済み,新コードへ変換しました,841234,,1514600,みどり町／サンプルバス\n",
     )
     assert not looks_like_mapping(p)
+
+
+def test_result_csv_is_rejected_when_specified_as_mapping(tmp_path):
+    p = write(
+        tmp_path,
+        output_station,
+        "id,status,detail,old_code,old_name,new_code,new_name\n"
+        "001,変換済み,新コードへ変換しました,841234,,1514600,みどり町／サンプルバス\n",
+    )
+    inp = write(tmp_path, "in.csv", "id,old_code\n001,841234\n")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        cmd_run([inp, "--mapping", str(p)])
+    assert "旧コード" in str(exc_info.value)
 
 
 def test_backed_up_result_csv_is_not_mistaken_for_mapping(tmp_path):
@@ -69,7 +79,7 @@ def test_backed_up_result_csv_is_not_mistaken_for_mapping(tmp_path):
 
 def test_mapping_requires_name_columns_too(tmp_path):
     """コード2列だけのCSVを対応表と取り違えない（parse も名称列を要求するため）。"""
-    p = write(tmp_path, "codes.csv", "old_code,new_code\n841234,1514600\n")
+    p = write(tmp_path, "codes.csv", "旧コード,新コード\n841234,1514600\n")
     assert not looks_like_mapping(p)
     full = write(tmp_path, "mapping.csv", MAPPING_CSV)
     assert looks_like_mapping(full)
@@ -252,7 +262,9 @@ def test_duplicate_old_code_is_reported_as_ambiguous():
     from ekispert_bus_data_migration.migrate.common import StatusAmbiguous
     from ekispert_bus_data_migration.migrate.station import StationInput, station
 
-    t = mapping.parse("old_code,new_code,old_name,new_name\n800001,900001,A旧,A新1\n800001,900002,A旧,A新2\n")
+    t = mapping.parse(
+        "旧コード,新コード,旧バス停名(フル),新バス停名(フル)\n800001,900001,A旧,A新1\n800001,900002,A旧,A新2\n"
+    )
     assert t.duplicate_old_codes() == ["800001"]
     res = station(t, StationInput(id="1", old_code="800001"))
     assert res.status == StatusAmbiguous

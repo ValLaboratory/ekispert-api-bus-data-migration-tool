@@ -1,7 +1,7 @@
 from ekispert_bus_data_migration import mapping
 
 sample = (
-    "old_code,new_code,old_name,new_name\n"
+    "旧コード,新コード,旧バス停名(フル),新バス停名(フル)\n"
     "841234,1514600,みどり町／サンプルバス※旧,みどり町／サンプルバス\n"
     "841235,1514601,こもれび橋／サンプルバス※旧,こもれび橋／サンプルバス\n"
 )
@@ -19,7 +19,7 @@ def test_contains_any_old_code():
 
 def test_contains_unconverted_old_code():
     s = (
-        "old_code,new_code,old_name,new_name\n"
+        "旧コード,新コード,旧バス停名(フル),新バス停名(フル)\n"
         "841234,1514600,みどり町／サンプルバス※旧,みどり町／サンプルバス\n"
         "1513754,1513754,みなと公園前／サンプルバス※旧,みなと公園前／サンプルバス\n"
     )
