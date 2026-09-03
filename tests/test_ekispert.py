@@ -73,3 +73,35 @@ def test_error_body_is_truncated(start_server):
         c.course_edit("x", False)
     assert len(str(ei.value)) < 500
     assert "以下省略" in str(ei.value)
+
+
+def test_client_keeps_engine_version_from_response(start_server):
+    import json
+
+    base = start_server(
+        lambda path, query: (
+            200,
+            json.dumps({"ResultSet": {"engineVersion": "202008_02a", "Course": [{}]}}),
+        )
+    )
+    c = Client(base, "key")
+    c.search_course_extreme({"viaList": "1:2"})
+    assert c.engine_version == "202008_02a"
+
+
+def test_client_keeps_last_engine_version_when_response_omits_it(start_server):
+    import json
+
+    versions = ["202008_02a", None]
+
+    def handler(path, query):
+        v = versions.pop(0)
+        rs = {"Course": [{}]}
+        if v is not None:
+            rs["engineVersion"] = v
+        return 200, json.dumps({"ResultSet": rs})
+
+    c = Client(start_server(handler), "key")
+    c.search_course_extreme({"viaList": "1:2"})
+    c.search_course_extreme({"viaList": "1:2"})
+    assert c.engine_version == "202008_02a"

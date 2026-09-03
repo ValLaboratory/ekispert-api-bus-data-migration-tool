@@ -359,3 +359,80 @@ def test_is_terminal_checks_the_given_stream():
     assert not _is_terminal(Fake(False))
     # isatty を持たないストリームに差し替わっても落とさない
     assert not _is_terminal(object())
+
+
+def read_summary(tmp_path):
+    from ekispert_bus_data_migration.outputs import output_summary
+
+    return (tmp_path / output_summary).read_text(encoding="utf-8-sig")
+
+
+def test_summary_records_run_conditions(tmp_path):
+    write(tmp_path, "mapping.csv", MAPPING_CSV)
+    profile = write_profile(tmp_path)
+    inp = write(tmp_path, "in.csv", "id,old_code\n001,841234\n")
+
+    cmd_run([inp, "--mapping", str(tmp_path / "mapping.csv"), "--config", profile])
+
+    text = read_summary(tmp_path)
+    assert "in.csv(1件)" in text
+    assert "mapping.csv" in text
+    assert "test-migration" in text
+    assert "変換済み:1" in text
+
+
+def test_summary_records_mapping_warning(tmp_path):
+    write(
+        tmp_path,
+        "mapping.csv",
+        MAPPING_CSV + "841234,みどり町／サンプルバス※旧,1514601,こもれび橋／サンプルバス\n",
+    )
+    inp = write(tmp_path, "in.csv", "id,old_code\n001,841234\n")
+
+    cmd_run([inp, "--mapping", str(tmp_path / "mapping.csv")])
+
+    assert "移行先が複数ある旧コード" in read_summary(tmp_path)
+
+
+def test_summary_is_backed_up_on_rerun(tmp_path):
+    from ekispert_bus_data_migration.outputs import output_summary
+
+    write(tmp_path, "mapping.csv", MAPPING_CSV)
+    inp = write(tmp_path, "in.csv", "id,old_code\n001,841234\n")
+
+    cmd_run([inp, "--mapping", str(tmp_path / "mapping.csv")])
+    cmd_run([inp, "--mapping", str(tmp_path / "mapping.csv")])
+
+    stem = os.path.splitext(output_summary)[0]
+    backups = [p.name for p in tmp_path.iterdir() if p.name.startswith(stem + "-")]
+    assert len(backups) == 1
+
+
+def test_backed_up_summary_is_treated_as_output_file():
+    from ekispert_bus_data_migration.outputs import is_output_file
+
+    assert is_output_file("実行サマリー-20300115-120000.txt")
+    assert not is_output_file("実行サマリー-20300115-120000.csv")
+
+
+def test_summary_records_engine_version_with_run_conditions(tmp_path, monkeypatch, start_server):
+    base = start_server(
+        lambda path, query: (
+            200,
+            json.dumps({"ResultSet": {"engineVersion": "202008_02a", "Course": [{}]}}),
+        )
+    )
+    profile = write_profile(tmp_path, source_api_base_url=base, target_api_base_url=base)
+    write(tmp_path, "mapping.csv", MAPPING_CSV)
+    inp = write(tmp_path, "in.csv", "id,serialize_data\n001,DUMMY\n")
+    monkeypatch.setenv("EKISPERT_ACCESS_KEY", "test-key")
+
+    cmd_run([inp, "--mapping", str(tmp_path / "mapping.csv"), "--config", profile])
+
+    lines = read_summary(tmp_path).splitlines()
+    engine = [i for i, x in enumerate(lines) if "engineVersion: 202008_02a" in x]
+    profile_line = next(i for i, x in enumerate(lines) if x.startswith("移行プロファイル"))
+    assert engine, "エンジンバージョンが記録されていない"
+    assert all(i == profile_line + n + 1 for n, i in enumerate(engine)), (
+        "移行プロファイルの直後に並んでいない: %r" % lines
+    )

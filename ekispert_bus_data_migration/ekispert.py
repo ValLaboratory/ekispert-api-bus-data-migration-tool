@@ -173,6 +173,7 @@ class Course:
 @dataclass
 class ResultSet:
     course: list = field(default_factory=list)
+    engine_version: str = ""
 
 
 @dataclass
@@ -259,6 +260,7 @@ def parse_response(obj):
     return APIResponse(
         result_set=ResultSet(
             course=[parse_course(x) for x in _as_list(rs.get("Course"))],
+            engine_version=rs.get("engineVersion") or "",
         )
     )
 
@@ -267,6 +269,7 @@ class Client:
     def __init__(self, base_url, access_key):
         self.base_url = base_url
         self.access_key = access_key
+        self.engine_version = ""
 
     def get(self, path, params):
         try:
@@ -286,6 +289,8 @@ class Client:
                 time.sleep(retry_base_wait * (1 << (attempt - 2)))
             resp, retryable, err = self._do_once(req_url, endpoint)
             if err is None:
+                if resp.result_set.engine_version != "":
+                    self.engine_version = resp.result_set.engine_version
                 return resp
             last_err = err
             if not retryable:

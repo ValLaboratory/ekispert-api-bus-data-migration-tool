@@ -103,3 +103,16 @@ def test_parse_station_reads_capitalized_name():
     st = course.route.points()[0].station_first()
     assert st.code == "1514600"
     assert st.name == "みどり町／サンプルバス"
+
+
+def test_parse_reads_engine_version():
+    from ekispert_bus_data_migration.ekispert import parse_response
+
+    resp = parse_response({"ResultSet": {"engineVersion": "202008_02a", "Course": []}})
+    assert resp.result_set.engine_version == "202008_02a"
+
+
+def test_parse_without_engine_version_is_empty():
+    from ekispert_bus_data_migration.ekispert import parse_response
+
+    assert parse_response({"ResultSet": {"Course": []}}).result_set.engine_version == ""

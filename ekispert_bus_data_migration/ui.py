@@ -71,20 +71,26 @@ def needs_attention(status):
     return status == StatusFailed or status == StatusAmbiguous
 
 
-def warn_duplicate_mapping(table):
+def warn_duplicate_mapping(table, summary=None):
     dups = table.duplicate_old_codes()
     if not dups:
         return
     shown = ", ".join(dups[:5])
     more = "" if len(dups) <= 5 else " ほか%d件" % (len(dups) - 5)
-    print(
+    _warn(
         "警告         : 対応表に移行先が複数ある旧コードがあります(%s%s)。該当データは要確認になります。"
         % (shown, more),
-        file=sys.stderr,
+        summary,
     )
 
 
-def warn_duplicate_ids(rows):
+def _warn(text, summary):
+    print(text, file=sys.stderr)
+    if summary is not None:
+        summary.note(text)
+
+
+def warn_duplicate_ids(rows, summary=None):
     seen = {}
     for r in rows:
         v = r.get("id", "").strip()
@@ -96,25 +102,47 @@ def warn_duplicate_ids(rows):
         return
     shown = ", ".join(dups[:5])
     more = "" if len(dups) <= 5 else " ほか%d件" % (len(dups) - 5)
-    print(
+    _warn(
         "警告         : id が重複しています(%s%s)。結果を元データへ突き合わせる際にご注意ください。"
         % (shown, more),
-        file=sys.stderr,
+        summary,
     )
 
 
-def print_closing(produced, skipped=()):
-    print("\n=== 処理が終わりました ===\n", file=sys.stderr)
+class Summary:
+    def __init__(self):
+        self.lines = []
+
+    def line(self, text=""):
+        print(text, file=sys.stderr)
+        self.lines.append(text)
+
+    def note(self, text):
+        self.lines.append(text)
+
+    def mark(self):
+        return len(self.lines)
+
+    def insert(self, at, texts):
+        self.lines[at:at] = list(texts)
+
+    def text(self):
+        return "\n".join(self.lines).strip("\n") + "\n"
+
+
+def print_closing(produced, skipped=(), summary=None):
+    out = summary.line if summary is not None else (lambda t="": print(t, file=sys.stderr))
+    out("\n=== 処理が終わりました ===\n")
     if produced:
-        print("作成したファイル:", file=sys.stderr)
+        out("作成したファイル:")
         for p in produced:
-            print("  %s" % os.path.basename(p), file=sys.stderr)
+            out("  %s" % os.path.basename(p))
     else:
-        print("作成したファイルはありません。", file=sys.stderr)
+        out("作成したファイルはありません。")
     if skipped:
-        print("\n要対応:", file=sys.stderr)
+        out("\n要対応:")
         for m in skipped:
-            print("  %s" % m, file=sys.stderr)
+            out("  %s" % m)
     print("\n※ 本ツールは利用者のシステムへの反映は行いません。", file=sys.stderr)
 
 

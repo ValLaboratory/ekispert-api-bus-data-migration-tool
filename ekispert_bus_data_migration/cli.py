@@ -18,14 +18,16 @@ from .migrate.common import (
 from .migrate.serialize import SerializeInput, serialize
 from .migrate.station import StationInput, station
 from .migrate.teiki import TeikiInput, teiki
-from .outputs import output_serialize, output_station, output_teiki
+from .outputs import output_serialize, output_station, output_summary, output_teiki
 from .ui import (
     Reporter,
+    Summary,
     print_closing,
     prompt_access_key,
     warn_duplicate_ids,
     warn_duplicate_mapping,
 )
+from .version import __version__
 
 
 def usage():
@@ -116,6 +118,11 @@ def cmd_run(args):
 
     print("=== バスデータ移行ツール ===\n", file=sys.stderr)
 
+    summary = Summary()
+    summary.note("=== バスデータ移行ツール 実行サマリー ===")
+    summary.note("実行日時     : %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
+    summary.note("ツール       : %s" % __version__)
+
     mapping_path = discover_mapping(ns.mapping, input_paths[0])
     table = mapping.load(mapping_path)
 
@@ -159,7 +166,7 @@ def cmd_run(args):
     station_output_ids = {id(r) for r in station_rows} | {id(r) for r in incomplete_rows}
     station_output_rows = [r for r in all_rows if id(r) in station_output_ids]
 
-    warn_duplicate_ids(all_rows)
+    warn_duplicate_ids(all_rows, summary)
 
     has_station = bool(station_output_rows)
     has_serialize = bool(serialize_rows)
@@ -178,12 +185,13 @@ def cmd_run(args):
         kinds.append("データ未入力(%d件)" % len(incomplete_rows))
     if not kinds:
         kinds.append("なし")
-    print("入力ファイル : %s" % " ".join(file_labels), file=sys.stderr)
-    print("対応表       : %s" % os.path.basename(mapping_path), file=sys.stderr)
-    warn_duplicate_mapping(table)
-    print("検出データ   : %s" % " / ".join(kinds), file=sys.stderr)
+    summary.line("入力ファイル : %s" % " ".join(file_labels))
+    summary.line("対応表       : %s" % os.path.basename(mapping_path))
+    warn_duplicate_mapping(table, summary)
+    summary.line("検出データ   : %s" % " / ".join(kinds))
     if has_serialize or has_teiki or config.profile_id:
-        print("移行プロファイル: %s" % (config.profile_id or "未指定"), file=sys.stderr)
+        summary.line("移行プロファイル: %s" % (config.profile_id or "未指定"))
+    conditions_end = summary.mark()
 
     access_key = os.environ.get("EKISPERT_ACCESS_KEY", "")
     need_api = (has_serialize and not serialize_profile_missing) or (has_teiki and not teiki_profile_missing)
@@ -198,27 +206,26 @@ def cmd_run(args):
 
     if has_station:
         label = "バス停コード・名称"
-        print("\n%s" % label, file=sys.stderr)
+        summary.line("\n%s" % label)
         p = prepare_output(os.path.join(out_dir, output_station))
         r = run_station(table, station_output_rows, p)
-        print("  結果: %s" % r.status_line(), file=sys.stderr)
+        summary.line("  結果: %s" % r.status_line())
         record_result(label, p, r, produced, skipped)
 
     if has_serialize:
         label = "経路シリアライズデータ"
-        print("\n%s" % label, file=sys.stderr)
+        summary.line("\n%s" % label)
         if not blocked(label, serialize_rows, serialize_profile_missing, access_key, skipped):
             p = prepare_output(os.path.join(out_dir, output_serialize))
             r = run_serialize(common, serialize_rows, p, access_key)
-            print(
-                "  結果: %s （CSVは%d行。1つの入力につき候補ごとに1行）" % (r.status_line(), r.written),
-                file=sys.stderr,
+            summary.line(
+                "  結果: %s （CSVは%d行。1つの入力につき候補ごとに1行）" % (r.status_line(), r.written)
             )
             record_result(label, p, r, produced, skipped)
 
     if has_teiki or teiki_skipped:
         label = "定期経路文字列"
-        print("\n%s" % label, file=sys.stderr)
+        summary.line("\n%s" % label)
         for name, m, count in teiki_skipped:
             print(
                 "  %s に %s 列が不足しているため、この%d件は処理していません" % (name, ", ".join(m), count),
@@ -228,11 +235,36 @@ def cmd_run(args):
         if has_teiki and not blocked(label, teiki_rows, teiki_profile_missing, access_key, skipped):
             p = prepare_output(os.path.join(out_dir, output_teiki))
             r = run_teiki(common, teiki_rows, p, access_key)
-            print("  結果: %s" % r.status_line(), file=sys.stderr)
+            summary.line("  結果: %s" % r.status_line())
             record_result(label, p, r, produced, skipped)
 
-    print_closing(produced, skipped)
+    summary.insert(conditions_end, engine_version_lines(common, config))
+    summary_path = prepare_output(os.path.join(out_dir, output_summary))
+    produced.append(summary_path)
+    print_closing(produced, skipped, summary)
+    write_summary(summary_path, summary, access_key)
     return 1 if skipped else 0
+
+
+def engine_version_lines(common, config):
+    lines = []
+    for label, client, base_url in (
+        ("移行元API   ", common.source_client, config.source_api_base_url),
+        ("移行先API   ", common.target_client, config.target_api_base_url),
+    ):
+        version = getattr(client, "engine_version", "")
+        if version == "":
+            continue
+        lines.append("%s : %s (engineVersion: %s)" % (label, base_url, version))
+    return lines
+
+
+def write_summary(path, summary, access_key=""):
+    try:
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            f.write(redact(summary.text(), access_key))
+    except OSError as e:
+        print("\n警告: 実行サマリーを書き出せませんでした: %s" % e, file=sys.stderr)
 
 
 def blocked(label, rows, profile_missing, access_key, skipped):

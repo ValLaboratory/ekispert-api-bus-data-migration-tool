@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ekispert-api-bus-data-migration-tool"
-version = "1.0.0"
+dynamic = ["version"]
 description = "バスデータ移行ツール（駅すぱあと API）"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,6 +15,9 @@ ekispert-bus-data-migration = "ekispert_bus_data_migration.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["ekispert_bus_data_migration*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ekispert_bus_data_migration.version.__version__" }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
