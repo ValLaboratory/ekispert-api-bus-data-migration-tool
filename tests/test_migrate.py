@@ -83,7 +83,7 @@ def verify_response(line):
     )
 
 
-# 運賃・所要時間・経由地点の差分を確認するためのレスポンス。
+# 運賃・所要時間・経由駅の差分を確認するためのレスポンス。
 # 旧経路: みどり町(841234) → 中央駅(22361)、系統１、190円、25分。
 OLD_EDIT_WITH_PRICE = """{
   "ResultSet": {
@@ -120,7 +120,7 @@ VIA_POINTS = [("1514600", "みどり町／サンプルバス"), ("1514700", "さ
 
 
 def priced_course(points, line, fare, on_board):
-    """動作確認(course/edit)のレスポンス。運賃・所要時間・地点を指定して組み立てる。"""
+    """動作確認(course/edit)のレスポンス。運賃・所要時間・駅を指定して組み立てる。"""
     point_json = ",".join('{"Station":{"code":"%s","Name":"%s"}}' % (c, n) for c, n in points)
     return (
         '{"ResultSet":{"Course":{'
@@ -193,7 +193,7 @@ def test_serialize_returns_candidates(start_server):
 
 
 def test_serialize_reports_fare_and_stop_changes(start_server):
-    """経路が同一でも運賃だけ変わる場合と、経由地点だけ変わる場合を区別して出力する。"""
+    """経路が同一でも運賃だけ変わる場合と、経由駅だけ変わる場合を区別して出力する。"""
 
     def source_handler(path, query):
         return 200, OLD_EDIT_WITH_PRICE
@@ -206,7 +206,7 @@ def test_serialize_reports_fare_and_stop_changes(start_server):
         "CAND_SAME": priced_course(SAME_POINTS, line, "190", "20"),
         # 経路は同じだが運賃だけ変わる
         "CAND_FARE": priced_course(SAME_POINTS, line, "250", "22"),
-        # 路線は同じだが経由地点が変わる
+        # 路線は同じだが経由駅が変わる
         "CAND_VIA": priced_course(VIA_POINTS, line, "190", "20"),
     }
 
@@ -243,10 +243,10 @@ def test_serialize_reports_fare_and_stop_changes(start_server):
     assert (fare.old_time, fare.new_time) == ("25", "27")
     assert "運賃・料金が変わりました (190円 → 250円)" in fare.detail
 
-    # 経由地点だけの変化を「利用路線が変わりました」と取り違えない
+    # 経由駅だけの変化を「利用路線が変わりました」と取り違えない
     assert via.route_changed == ChangedYes
     assert via.fare_changed == ChangedNo
-    assert "経由バス停・地点が変わりました" in via.detail
+    assert "経由バス停・駅が変わりました" in via.detail
     assert "利用路線が変わりました" not in via.detail
 
 
@@ -322,7 +322,7 @@ def test_valid_teiki_route_by_type():
     assert not valid_teiki_route("A:L:B")
     assert valid_teiki_route("A:L:B", RouteTypeRoute)
     assert not valid_teiki_route("A:L:Down:B", RouteTypeRoute)
-    # 地点1個（区間が無い）はどちらの形式でも定期経路になりえない
+    # 駅1個（区間が無い）はどちらの形式でも定期経路になりえない
     assert not valid_teiki_route("A")
     assert not valid_teiki_route("A", RouteTypeRoute)
 
@@ -486,9 +486,9 @@ OLD_EDIT_VIA_AMBIGUOUS = """{
 
 
 def test_serialize_stops_when_old_route_code_has_multiple_destinations(start_server):
-    """旧経路の地点の移行先が複数ある場合、先頭候補へ黙って変換して再探索しない。
+    """旧経路の駅の移行先が複数ある場合、先頭候補へ黙って変換して再探索しない。
 
-    via_list を指定しない経路は旧経路の地点をそのまま再探索の入力に使うため、
+    via_list を指定しない経路は旧経路の駅をそのまま再探索の入力に使うため、
     ここで先勝ちすると誤ったバス停を通る経路が「移行先の候補」として出てしまう。
     """
     new_requests = []

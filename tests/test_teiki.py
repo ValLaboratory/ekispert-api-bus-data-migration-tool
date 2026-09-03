@@ -165,7 +165,7 @@ def test_verification_uses_same_conditions_as_average_search(table, start_server
 
     average, verify = calls[1], calls[2]
     assert average.get("searchType") == "plain"
-    # 対応表に載るバス停は新コードへ、載らない地点は名称のまま（コードを知りえないため）
+    # 対応表に載る駅は新コードへ、載らない駅は名称のまま（コードを知りえないため）
     assert average.get("viaList") == "1514600:中央駅"
     # 動作確認は再探索と同じ viaList・date、かつ plain
     assert verify.get("viaList") == average.get("viaList")
@@ -233,7 +233,7 @@ def test_assign_route_is_migrated_without_direction(table, start_server):
 
 
 def test_assign_route_round_trips_through_split_and_build(table, start_server):
-    """方向なしでも、分解した地点数ぶんの区間を保って組み立て直せる。"""
+    """方向なしでも、分解した駅数ぶんの区間を保って組み立て直せる。"""
     calls = []
     c = common(table)
     c.target_client = two_phase_client(
@@ -306,7 +306,7 @@ def test_nonexistent_date_is_error(table):
     ],
 )
 def test_empty_origin_or_destination_is_error_before_api(table, start_server, overrides, expected):
-    """必須の発着地点が空の行は、APIへ送らず入力の欠落として返す。
+    """必須の発着駅が空の行は、APIへ送らず入力の欠落として返す。
 
     空のまま割り当て確認へ送るとAPIエラーになり、原因が入力の欠落だと分からない。
     """

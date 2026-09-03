@@ -72,7 +72,7 @@ def teiki(c, inp):
     empty = [name for name in ("origin", "destination") if getattr(inp, name).strip() == ""]
     if empty:
         res.status, res.detail = failed(
-            "%s が空です。定期区間の出発・到着地点を指定してください" % "・".join(empty)
+            "%s が空です。定期区間の出発・到着駅を指定してください" % "・".join(empty)
         )
         return res
 
@@ -156,7 +156,7 @@ def teiki(c, inp):
     lines_same = same_lines(line_names, directions, researched.route.lines(), kind)
     res.route_changed = ChangedNo if (stops_same and lines_same) else ChangedYes
     if not stops_same:
-        notes.append("経由バス停・地点が変わりました")
+        notes.append("経由バス停・駅が変わりました")
     if not lines_same:
         notes.append("平均路線名・方向が変わりました")
 
@@ -264,7 +264,7 @@ def convert_stop_names(names, table):
 
 
 def same_stops(converted, new_route):
-    """対応表で変換した地点と、平均探索で得た経路の地点が一致するかを返す。"""
+    """対応表で変換した駅と、平均探索で得た経路の駅が一致するかを返す。"""
     points = new_route.points()
     if len(converted) != len(points):
         return False

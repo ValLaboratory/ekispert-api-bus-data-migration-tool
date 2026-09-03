@@ -65,7 +65,7 @@ def format_candidates(entries):
 
 
 def route_summary(route):
-    """経路を「地点名 →[路線名]→ 地点名」形式の1行にする。"""
+    """経路を「駅名 →[路線名]→ 駅名」形式の1行にする。"""
     return summarize_names(
         [p.station_first().name for p in route.points()],
         [ln.name for ln in route.lines()],
@@ -73,7 +73,7 @@ def route_summary(route):
 
 
 def summarize_names(stop_names, line_names):
-    """地点名・路線名の並びを「地点名 →[路線名]→ 地点名」形式の1行にする。"""
+    """駅名・路線名の並びを「駅名 →[路線名]→ 駅名」形式の1行にする。"""
     b = []
     for i, name in enumerate(stop_names):
         if i > 0:

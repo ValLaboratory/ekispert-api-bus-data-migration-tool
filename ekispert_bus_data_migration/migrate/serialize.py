@@ -84,9 +84,7 @@ def serialize(c, inp):
         ambiguous = ambiguous_point_notes(c.table, old_course.route.point_codes())
         if ambiguous:
             res.status = StatusAmbiguous
-            res.detail = "旧経路の地点の移行先が対応表に複数あり一意に決められません。" + " / ".join(
-                ambiguous
-            )
+            res.detail = "旧経路の駅の移行先が対応表に複数あり一意に決められません。" + " / ".join(ambiguous)
             return res
 
     try:
@@ -138,10 +136,10 @@ def verify_candidate(c, old_course, found, no):
     lines_same = same_lines(old_course.route, new_course.route)
     if not stops_ok:
         # 判定できないものを「変化なし」に倒すと、確認が必要な行を見落とす。差分列は空のままとする。
-        notes.append("旧経路の地点の移行先が対応表に複数あるため経路の変化を判定できません")
+        notes.append("旧経路の駅の移行先が対応表に複数あるため経路の変化を判定できません")
     else:
         if not stops_same:
-            notes.append("経由バス停・地点が変わりました")
+            notes.append("経由バス停・駅が変わりました")
         cand.route_changed = ChangedNo if (stops_same and lines_same) else ChangedYes
     if not lines_same:
         notes.append("利用路線が変わりました")
@@ -173,7 +171,7 @@ def verify_candidate(c, old_course, found, no):
 
 
 def ambiguous_point_notes(table, codes):
-    """移行先が一意に決まらない地点コードと、その候補の説明を返す（一意なら空）。"""
+    """移行先が一意に決まらない駅コードと、その候補の説明を返す（一意なら空）。"""
     return [
         "%s の候補: %s" % (code, format_candidates(table.is_ambiguous_code(code)))
         for code in table.ambiguous_codes(codes)
@@ -181,7 +179,7 @@ def ambiguous_point_notes(table, codes):
 
 
 def same_stops(table, old_route, new_route):
-    """旧経路の地点を対応表で変換した結果が新経路の地点と一致するか（コードで比較）。"""
+    """旧経路の駅を対応表で変換した結果が新経路の駅と一致するか（コードで比較）。"""
     old_codes = old_route.point_codes()
     new_codes = new_route.point_codes()
     if table.ambiguous_codes(old_codes):
@@ -224,7 +222,7 @@ def research_from_serialized(c, old_course):
     points = old_course.route.points()
     lines = old_course.route.lines()
     if len(points) < 2:
-        raise RuntimeError("経路の地点が2未満のため発着地点を取得できません")
+        raise RuntimeError("経路の駅が2未満のため発着駅を取得できません")
     codes = [c.table.convert_code(p.station_first().code) for p in points]
     via = ":".join(codes)
 

@@ -66,10 +66,10 @@ id,old_code
 | `id`                                 | 結果との対応付けに使用する任意の識別子。指定を推奨。移行処理には使用しない                                      |
 | `old_code` / `old_name`              | 移行前のバス停コードまたはバス停名称。両方を記載した場合は `old_code` で照合する                                |
 | `serialize_data`                     | 移行前の経路シリアライズデータ（`Course/SerializeData`）                                                        |
-| `via_list`                           | 元の探索で `viaList` に指定した経由地点を `:` で連結した値。元の探索条件を保持している場合は指定が必要          |
+| `via_list`                           | 元の探索で `viaList` に指定した経由駅を `:` で連結した値。元の探索条件を保持している場合は指定が必要          |
 | `date` / `time`（経路シリアライズ）  | 元の探索で指定した日付・時刻（`YYYYMMDD` / `HHMM`）                                                             |
 | `search_type` / `condition_detail`   | 元の探索で指定した `searchType` / `conditionDetail`                                                             |
-| `origin` / `destination`（定期経路） | 定期区間の出発・到着地点として指定する、移行先APIで有効な地点コード                                             |
+| `origin` / `destination`（定期経路） | 定期区間の出発・到着駅として指定する、移行先APIで有効な駅コード                                             |
 | `date` / `time`（定期経路）          | 移行先APIでの再探索・動作確認に使う日付・時刻（`YYYYMMDD` / `HHMM`）。`date` は移行プロファイルの適用開始日以降 |
 | `route_type`                         | `assignDetailRoute`（方向あり）または `assignRoute`（方向なし）。省略時は `assignDetailRoute`                   |
 | `detail_route`                       | 移行前の定期経路文字列                                                                                          |
@@ -182,7 +182,7 @@ $ python3 -m ekispert_bus_data_migration バス停.csv 経路.csv 定期.csv --c
 | `new_serialize_data`             | 経路シリアライズデータ移行 | 候補の新しい経路シリアライズデータ。動作確認まで完了した候補のみ   |
 | `new_detail_route`               | 定期経路文字列移行         | 新しい定期経路文字列。動作確認まで完了した行のみ                   |
 | `route_changed` / `fare_changed` | APIを使う2機能             | 移行前と比べて経路・運賃が変わったか（`変化あり` / `変化なし`）    |
-| `old_route` / `new_route`        | APIを使う2機能             | 移行前後の経路を「地点名 →[路線名]→ 地点名」の形式に要約した文字列 |
+| `old_route` / `new_route`        | APIを使う2機能             | 移行前後の経路を「駅名 →[路線名]→ 駅名」の形式に要約した文字列 |
 | `old_fare` / `new_fare`          | 経路シリアライズデータ移行 | 移行前後の片道の運賃・料金の合計（円）                             |
 | `old_time_min` / `new_time_min`  | 経路シリアライズデータ移行 | 移行前後の所要時間（分）                                           |
 
