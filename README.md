@@ -41,6 +41,8 @@
 
 バス停データ変換は移行プロファイル・アクセスキー・ネットワーク接続なしで実行できます。
 
+移行元APIは移行期間中だけ提供される場合があります。利用条件・提供終了時期は対象再編の案内を確認してください。
+
 ### 2. 入力CSVを作成する
 
 結果を元データへ紐付けるため、すべての入力CSVに `id` 列を付けることを推奨します。`id` は移行処理には使用せず、結果CSVへそのまま出力します。省略した場合も処理できますが、結果CSVの `id` は空欄になり、特に複数ファイルや複数の移行先候補を扱う場合は、どの入力に対する結果か分かりづらくなります。
@@ -83,6 +85,8 @@ id,old_code
 
 入力例は [station-input.csv](./examples/station-input.csv)、[serialize-input.csv](./examples/serialize-input.csv)、[teiki-input.csv](./examples/teiki-input.csv) にあります。`station-input.csv` は、同じフォルダーの [mapping.csv](./examples/mapping.csv) と組み合わせてそのまま実行できます。`mapping.csv` は、旧バス停と新バス停の対応を記載した新旧バス停対応表のサンプルです。`serialize-input.csv` と `teiki-input.csv` は、値を利用者のデータに置き換えて使うテンプレートです。3種類を1つにまとめる場合は [merged-input.csv](./examples/merged-input.csv) を参照してください。
 
+入力CSVと新旧バス停対応表はUTF-8です。BOMの有無は問いません。Excelでは「CSV UTF-8」で保存します。
+
 ### 3. 実行する
 
 リポジトリのルートフォルダーで次を実行します。Releases のZIPを展開した場合、フォルダー名は `ekispert-api-bus-data-migration-tool-1.0.0` のようにバージョンが付きます。
@@ -106,7 +110,7 @@ python3 -m ekispert_bus_data_migration 移行したいデータ.csv --config pro
 python3 -m ekispert_bus_data_migration バス停.csv 経路.csv 定期.csv --config profiles/bus-data-migration-202608.json
 ```
 
-結果CSVは、最初に指定した入力CSVと同じフォルダーに作成されます。
+結果CSVは、最初に指定した入力CSVと同じフォルダーに、UTF-8 BOM付きで作成されます。同名の結果ファイルがある場合は、タイムスタンプ付きの名称に退避してから新しい結果を作成します。
 
 新旧バス停対応表は、入力CSVと同じフォルダーに置くと自動検出します。候補が複数見つかった場合は処理を開始せず、候補を画面に表示します。その場合は、使用する対応表を `--mapping` で指定してください。
 
@@ -114,7 +118,9 @@ python3 -m ekispert_bus_data_migration バス停.csv 経路.csv 定期.csv --con
 python3 -m ekispert_bus_data_migration 入力.csv --mapping 新旧バス停対応表.csv
 ```
 
-APIを使うデータがある場合は、必要になった時点でアクセスキーの入力を求めます。入力内容は画面に表示しません。
+APIを使うデータがある場合は、必要になった時点でアクセスキーの入力を求めます。入力内容は画面に表示しません。自動実行では環境変数 `EKISPERT_ACCESS_KEY` を使用します。
+
+APIを使う処理は、入力件数によって実行に時間がかかる場合があります。
 
 主なオプションは次のとおりです。
 
@@ -195,15 +201,6 @@ $ python3 -m ekispert_bus_data_migration バス停.csv 経路.csv 定期.csv --c
 - 未処理または `エラー` がある場合は終了コードが `0` 以外
 
 `route_changed`・`fare_changed` をどう判定しているか、各ステータスをどの条件で決めているかは [SPEC.md](./SPEC.md) の「2.3 ステータス・差分の値」および「3. 機能仕様」に記載しています。
-
-## 最低限の注意事項
-
-- 入力CSVと新旧バス停対応表はUTF-8。BOMの有無は不問。Excelでは「CSV UTF-8」で保存
-- 結果CSVはUTF-8 BOM付き
-- 同名の結果ファイルがある場合は、タイムスタンプ付きの名称に退避してから新しい結果を作成
-- APIを使う処理は入力件数によって実行に時間がかかる場合あり
-- 移行元APIは移行期間中だけ提供される場合あり。利用条件・提供終了時期は対象再編の案内を確認
-- アクセスキーは実行時に画面から入力。自動実行では環境変数 `EKISPERT_ACCESS_KEY` を使用
 
 ## ライセンス
 
