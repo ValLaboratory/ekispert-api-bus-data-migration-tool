@@ -99,6 +99,7 @@ python3 -m ekispert_bus_data_migration 移行したいデータ.csv
 この実行方法は、移行プロファイルが不要なバス停データ変換で使用できます。Windowsで `python3` を使えない場合は `python` に読み替えます。
 
 APIを使うデータがある場合は、対象再編の移行プロファイルを指定します。
+また、必要になった時点でアクセスキーの入力を求めます。入力内容は画面に表示しません。自動実行などの用途では環境変数 EKISPERT_ACCESS_KEY を使用できます。
 
 ```sh
 python3 -m ekispert_bus_data_migration 移行したいデータ.csv --config profiles/bus-data-migration-202608.json
@@ -117,8 +118,6 @@ python3 -m ekispert_bus_data_migration バス停.csv 経路.csv 定期.csv --con
 ```sh
 python3 -m ekispert_bus_data_migration 入力.csv --mapping 新旧バス停対応表.csv
 ```
-
-APIを使うデータがある場合は、必要になった時点でアクセスキーの入力を求めます。入力内容は画面に表示しません。自動実行では環境変数 `EKISPERT_ACCESS_KEY` を使用します。
 
 APIを使う処理は、入力件数によって実行に時間がかかる場合があります。
 
