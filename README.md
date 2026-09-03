@@ -71,8 +71,8 @@ id,old_code
 | `search_type` / `condition_detail`   | 元の探索で指定した `searchType` / `conditionDetail`                                                             |
 | `origin` / `destination`（定期経路） | 定期区間の出発・到着駅として指定する、移行先APIで有効な駅コード                                             |
 | `date` / `time`（定期経路）          | 移行先APIでの再探索・動作確認に使う日付・時刻（`YYYYMMDD` / `HHMM`）。`date` は移行プロファイルの適用開始日以降 |
-| `route_type`                         | `assignDetailRoute`（方向あり）または `assignRoute`（方向なし）。省略時は `assignDetailRoute`                   |
-| `detail_route`                       | 移行前の定期経路文字列                                                                                          |
+| `route_type`                         | `detail_route` を移行先APIへ渡すときのパラメーター名。方向を含む定期経路文字列は `assignDetailRoute`、含まない場合は `assignRoute`。省略時は `assignDetailRoute` |
+| `detail_route`                       | 移行前の定期経路文字列。形式は `route_type` で指定する |
 
 バス停コードを保持していないデータは `old_name` に旧バス停名称を記載します。移行先を一意に決められるのは旧コードのため、旧コードを保持している場合は必ず `old_code` に記載してください。旧名称のみで照合した行は、対応表で移行先が1つに定まったことを意味します。同名の別バス停があり移行先が複数になる場合は変換せず `要確認（同名バス停あり）` とし、候補を `detail` 列に列挙します。
 
