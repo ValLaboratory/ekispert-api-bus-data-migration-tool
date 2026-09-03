@@ -81,7 +81,7 @@ id,old_code
 > [!IMPORTANT]
 > 経路シリアライズデータと定期経路文字列では `date`・`time` の意味が異なります。1行に `serialize_data` と `detail_route` を同時に記載しないでください。
 
-入力例は [station-input.csv](./examples/station-input.csv)、[serialize-input.csv](./examples/serialize-input.csv)、[teiki-input.csv](./examples/teiki-input.csv) にあります。`station-input.csv` は同じフォルダーの [mapping.csv](./examples/mapping.csv) を使って実行できます。`serialize-input.csv` と `teiki-input.csv` は、値を利用者のデータに置き換えて使うテンプレートです。3種類を1つにまとめる場合は [merged-input.csv](./examples/merged-input.csv) を参照してください。
+入力例は [station-input.csv](./examples/station-input.csv)、[serialize-input.csv](./examples/serialize-input.csv)、[teiki-input.csv](./examples/teiki-input.csv) にあります。`station-input.csv` は、同じフォルダーの [mapping.csv](./examples/mapping.csv) と組み合わせてそのまま実行できます。`mapping.csv` は、旧バス停と新バス停の対応を記載した新旧バス停対応表のサンプルです。`serialize-input.csv` と `teiki-input.csv` は、値を利用者のデータに置き換えて使うテンプレートです。3種類を1つにまとめる場合は [merged-input.csv](./examples/merged-input.csv) を参照してください。
 
 ### 3. 実行する
 
