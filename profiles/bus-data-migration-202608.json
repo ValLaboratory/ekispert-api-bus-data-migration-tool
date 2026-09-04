@@ -1,0 +1,6 @@
+{
+  "profile_id": "bus-data-migration-202608",
+  "source_api_base_url": "https://v20260803a-api.ekispert.jp",
+  "target_api_base_url": "https://api.ekispert.jp",
+  "target_data_start_date": "20260807"
+}
