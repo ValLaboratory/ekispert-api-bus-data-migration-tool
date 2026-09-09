@@ -235,7 +235,10 @@ def cmd_run(args):
         if has_teiki and not blocked(label, teiki_rows, teiki_profile_missing, access_key, skipped):
             p = prepare_output(os.path.join(out_dir, output_teiki))
             r = run_teiki(common, teiki_rows, p, access_key)
-            summary.line("  結果: %s" % r.status_line())
+            extra = ""
+            if r.written != len(teiki_rows):
+                extra = " （CSVは%d行。候補を提示した入力は候補ごとに1行）" % r.written
+            summary.line("  結果: %s%s" % (r.status_line(), extra))
             record_result(label, p, r, produced, skipped)
 
     summary.insert(conditions_end, engine_version_lines(common, config))
@@ -430,6 +433,7 @@ def run_serialize(common, rows, out_path, access_key=""):
 def run_teiki(common, rows, out_path, access_key=""):
     header = [
         "id",
+        "candidate_no",
         "status",
         "detail",
         "origin",
@@ -450,19 +454,37 @@ def run_teiki(common, rows, out_path, access_key=""):
             inp = build_input(TeikiInput, row)
             res = teiki(common, inp)
             res.detail = redact(res.detail, access_key)
+            for cd in res.candidates:
+                cd.detail = redact(cd.detail, access_key)
             rep.row(res.status, inp.id, res.detail)
-            w.write_row(
-                dict(
-                    input_columns(inp),
-                    id=res.id,
-                    status=res.status,
-                    detail=res.detail,
-                    new_detail_route=res.new_detail_route,
-                    route_changed=res.route_changed,
-                    old_route=res.old_route,
-                    new_route=res.new_route,
+
+            base = dict(input_columns(inp), id=res.id, old_route=res.old_route)
+            if not res.candidates:
+                w.write_row(
+                    dict(
+                        base,
+                        status=res.status,
+                        detail=res.detail,
+                        new_detail_route=res.new_detail_route,
+                        route_changed=res.route_changed,
+                        new_route=res.new_route,
+                    )
                 )
-            )
+                rep.written += 1
+                continue
+            for cd in res.candidates:
+                w.write_row(
+                    dict(
+                        base,
+                        candidate_no=str(cd.no),
+                        status=cd.status,
+                        detail=cd.detail,
+                        new_detail_route=cd.new_detail_route,
+                        route_changed=cd.route_changed,
+                        new_route=cd.new_route,
+                    )
+                )
+                rep.written += 1
         rep.finish()
     finally:
         w.close()

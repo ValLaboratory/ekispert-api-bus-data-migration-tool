@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .common import (
     ChangedNo,
     ChangedYes,
     StatusAmbiguous,
-    StatusConverted,
+    StatusCandidate,
+    StatusFailed,
     StatusNotTarget,
     StatusNoUpdate,
     failed,
@@ -40,6 +41,16 @@ class TeikiInput:
 
 
 @dataclass
+class TeikiCandidate:
+    no: int = 0
+    status: str = ""
+    detail: str = ""
+    new_detail_route: str = ""
+    route_changed: str = ""
+    new_route: str = ""
+
+
+@dataclass
 class TeikiResult:
     id: str = ""
     status: str = ""
@@ -48,6 +59,17 @@ class TeikiResult:
     route_changed: str = ""
     old_route: str = ""
     new_route: str = ""
+    candidates: list = field(default_factory=list)
+
+
+@dataclass
+class Conversion:
+    kind: str = RouteTypeDetail
+    via_list: str = ""
+    stops: list = field(default_factory=list)
+    line_names: list = field(default_factory=list)
+    directions: list = field(default_factory=list)
+    notes: list = field(default_factory=list)
 
 
 def teiki(c, inp):
@@ -136,65 +158,110 @@ def teiki(c, inp):
             via_parts.append(sc.code)
         else:
             via_parts.append(sc.name)
-    via_list = ":".join(via_parts)
+    conv = Conversion(
+        kind=kind,
+        via_list=":".join(via_parts),
+        stops=converted,
+        line_names=line_names,
+        directions=directions,
+        notes=notes,
+    )
 
     try:
-        researched = c.target_client.search_course_extreme(
+        courses = c.target_client.search_course_extreme_all(
             {
-                "viaList": via_list,
+                "viaList": conv.via_list,
                 "date": inp.date,
                 "searchType": "plain",
-                "answerCount": "1",
+                "searchCount": str(c.search_count_for_api()),
+                "answerCount": str(c.candidate_count_for_api()),
             }
         )
     except Exception as e:
         res.status, res.detail = failed("平均探索に失敗: " + str(e))
         return res
 
-    res.new_route = route_summary(researched.route)
-    stops_same = same_stops(converted, researched.route)
-    lines_same = same_lines(line_names, directions, researched.route.lines(), kind)
-    res.route_changed = ChangedNo if (stops_same and lines_same) else ChangedYes
+    usable = 0
+    matched = 0
+    for i, course in enumerate(courses):
+        cand, _ = verify_candidate(c, inp, conv, course, i + 1)
+        if cand.status == StatusCandidate:
+            usable += 1
+            if cand.route_changed == ChangedNo:
+                matched += 1
+        res.candidates.append(cand)
+
+    if usable == 0:
+        res.status, res.detail = failed(
+            "動作確認できた移行先候補がありませんでした（候補%d件）: %s"
+            % (len(res.candidates), " / ".join(unique_details(res.candidates)))
+        )
+        return res
+    res.status = StatusCandidate
+    res.detail = "%d件の移行先候補を提示しました。採用する定期経路文字列を選択してください" % usable
+    if matched:
+        res.detail += "（うち%d件は元の経路と実質的な差がありません: route_changed=変化なし）" % matched
+    return res
+
+
+def verify_candidate(c, inp, conv, course, no):
+    cand = TeikiCandidate(no=no, status=StatusFailed)
+    cand.new_route = route_summary(course.route)
+
+    stops_same = same_stops(conv.stops, course.route)
+    lines_same = same_lines(conv.line_names, conv.directions, course.route.lines(), conv.kind)
+    cand.route_changed = ChangedNo if (stops_same and lines_same) else ChangedYes
+
+    notes = list(conv.notes)
     if not stops_same:
         notes.append("経由バス停・駅が変わりました")
     if not lines_same:
         notes.append("平均路線名・方向が変わりました")
 
     try:
-        new_detail_route = build_teiki_route(researched.route, kind)
+        new_detail_route = build_teiki_route(course.route, conv.kind)
     except RuntimeError as e:
-        res.status, res.detail = failed(str(e))
-        return res
+        cand.detail = str(e)
+        return cand, notes
 
     try:
         applied = c.target_client.search_course_extreme(
             {
-                "viaList": via_list,
+                "viaList": conv.via_list,
                 "date": inp.date,
                 "searchType": "plain",
-                kind: new_detail_route,
+                conv.kind: new_detail_route,
                 "addAssignStatus": "true",
                 "answerCount": "1",
             }
         )
     except Exception as e:
-        res.status, res.detail = failed("新定期経路文字列の動作確認に失敗: " + str(e))
-        return res
-    applied_st = applied.assign_status
-    if applied_st.code != "0" or applied_st.require_update != "0":
-        res.status, res.detail = failed(
-            "新定期経路文字列の割り当てを確認できませんでした "
-            "(AssignStatus.code=%s, requireUpdate=%s)" % (applied_st.code, applied_st.require_update)
-        )
-        return res
+        cand.detail = "新定期経路文字列の動作確認に失敗: " + str(e)
+        return cand, notes
 
-    res.status = StatusConverted
-    res.new_detail_route = new_detail_route
+    st = applied.assign_status
+    if st.code != "0" or st.require_update != "0":
+        cand.detail = (
+            "新定期経路文字列の割り当てを確認できませんでした "
+            "(AssignStatus.code=%s, requireUpdate=%s)" % (st.code, st.require_update)
+        )
+        return cand, notes
+
+    cand.status = StatusCandidate
+    cand.new_detail_route = new_detail_route
     if notes:
-        res.detail = "新しい定期経路文字列の動作確認まで完了。要確認: " + " / ".join(notes)
+        cand.detail = "移行先候補。要確認: " + " / ".join(notes)
     else:
-        res.detail = "新しい定期経路文字列の動作確認まで完了"
-    return res
+        cand.detail = "移行先候補（元の経路と実質的な差なし）"
+    return cand, notes
+
+
+def unique_details(candidates):
+    out = []
+    for cand in candidates:
+        if cand.detail != "" and cand.detail not in out:
+            out.append(cand.detail)
+    return out
 
 
 def parse_route_type(value):
