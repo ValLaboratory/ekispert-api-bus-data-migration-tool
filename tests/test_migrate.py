@@ -2,7 +2,7 @@ import json
 import os
 
 from ekispert_bus_data_migration import mapping
-from ekispert_bus_data_migration.ekispert import Client, parse_route
+from ekispert_bus_data_migration.ekispert import Client, parse_course, parse_route
 from ekispert_bus_data_migration.migrate.common import (
     ChangedNo,
     ChangedYes,
@@ -19,6 +19,8 @@ from ekispert_bus_data_migration.migrate.serialize import (
     same_lines,
     same_stops,
     serialize,
+    switch_indices,
+    switch_targets,
 )
 from ekispert_bus_data_migration.migrate.teiki import (
     RouteTypeRoute,
@@ -131,8 +133,72 @@ def priced_course(points, line, fare, on_board):
     )
 
 
+NORMAL_AND_IC = (
+    ("1", "普通乗車券", "Fare", "190"),
+    ("2", "ICカード乗車券", "FareICCard", "180"),
+)
+NORMAL_ONLY = (("1", "普通乗車券", "Fare", "190"),)
+
+
+def fare_prices(summary, selected_index, options):
+    entries = ['{"kind":"FareSummary","Oneway":"%s"}' % summary]
+    for index, name, type_, oneway in options:
+        entries.append(
+            '{"kind":"Fare","index":"%s","fromLineIndex":"1","toLineIndex":"1",'
+            '"selected":"%s","Oneway":"%s","Name":"%s","Type":"%s"}'
+            % (index, "true" if index == selected_index else "false", oneway, name, type_)
+        )
+    return ",".join(entries)
+
+
+def old_edit_with_fare_options(selected_index, summary, options=NORMAL_AND_IC):
+    return (
+        '{"ResultSet":{"Course":{"dataType":"onTimetable","Price":[%s],'
+        '"Route":{"timeOnBoard":"20","timeWalk":"5",'
+        '"Point":[{"Station":{"code":"841234","Name":"みどり町／サンプルバス※旧"}},'
+        '{"Station":{"code":"22361","Name":"中央駅"}}],'
+        '"Line":[{"Name":"サンプルバス※旧・系統１","direction":"Down",'
+        '"DepartureState":{"Datetime":{"text":"2026-08-02T00:38:00+09:00"}}}]}}}}'
+        % fare_prices(summary, selected_index, options)
+    )
+
+
+def new_edit_with_fare_options(selected_index, summary, options=NORMAL_AND_IC):
+    return (
+        '{"ResultSet":{"Course":{"Price":[%s],'
+        '"Route":{"timeOnBoard":"20","timeWalk":"5",'
+        '"Point":[{"Station":{"code":"1514600","Name":"みどり町／サンプルバス"}},'
+        '{"Station":{"code":"22361","Name":"中央駅"}}],'
+        '"Line":[{"Name":"サンプルバス・系統１","direction":"Down"}]}}}}'
+        % fare_prices(summary, selected_index, options)
+    )
+
+
 def must_table():
     return mapping.load(os.path.join(EXAMPLES_DIR, "mapping.csv"))
+
+
+def switch_case(start_server, old_body, new_body, recalculated=None):
+    requests = []
+
+    def target_handler(path, query):
+        requests.append((path, query))
+        if path == "/v1/json/search/course/extreme":
+            return 200, NEW_SEARCH_RESPONSE
+        if path == "/v1/json/course/edit":
+            return 200, new_body
+        if path == "/v1/json/course/recalculate":
+            return 200, recalculated
+        return 500, "{}"
+
+    c = Common(table=must_table(), candidate_count=1)
+    c.source_client = Client(start_server(lambda path, query: (200, old_body)), "test-key")
+    c.target_client = Client(start_server(target_handler), "test-key")
+
+    res = serialize(c, SerializeInput(id="route-switch", serialize_data="OLD_SERIALIZED_DATA"))
+    assert res.status == StatusCandidate, res.detail
+    assert len(res.candidates) == 1
+    return res.candidates[0], requests
 
 
 def test_serialize_returns_candidates(start_server):
@@ -248,6 +314,277 @@ def test_serialize_reports_fare_and_stop_changes(start_server):
     assert via.fare_changed == ChangedNo
     assert "経由バス停・駅が変わりました" in via.detail
     assert "利用路線が変わりました" not in via.detail
+
+
+def test_serialize_reproduces_old_switch_state(start_server):
+    recalculated = '{"ResultSet":{"Course":{"SerializeData":"NEW_SERIALIZED_DATA_IC","Price":[%s]}}}' % (
+        fare_prices("180", "2", NORMAL_AND_IC)
+    )
+    cand, requests = switch_case(
+        start_server,
+        old_edit_with_fare_options("2", "180"),
+        new_edit_with_fare_options("1", "190"),
+        recalculated,
+    )
+
+    recalcs = [q for p, q in requests if p == "/v1/json/course/recalculate"]
+    assert len(recalcs) == 1
+    assert recalcs[0].get("serializeData") == "NEW_SERIALIZED_DATA"
+    assert recalcs[0].get("fareIndex") == "2"
+    assert recalcs[0].get("checkEngineVersion") == "true"
+
+    assert cand.new_serialize_data == "NEW_SERIALIZED_DATA_IC"
+    assert (cand.old_fare, cand.new_fare) == ("180", "180")
+    assert cand.fare_changed == ChangedNo
+    assert "旧経路の切替状態（金額種別）を再現しました" in cand.detail
+
+
+def test_serialize_outputs_teiki_when_summary_is_available(start_server):
+
+    def edit(code, name, teiki1, teiki3, old_side=False):
+        head = '"dataType":"onTimetable",' if old_side else '"SerializeData":"NEW_SERIALIZED_DATA",'
+        dep = ',"DepartureState":{"Datetime":{"text":"2026-08-02T00:38:00+09:00"}}' if old_side else ""
+        prices = (
+            '{"kind":"FareSummary","Oneway":"190"},'
+            '{"kind":"Fare","index":"1","selected":"true","Oneway":"190",'
+            '"fromLineIndex":"1","toLineIndex":"1","Type":"Fare"},'
+            '{"kind":"Teiki1Summary","Oneway":"%s"},'
+            '{"kind":"Teiki3Summary","Oneway":"%s"}' % (teiki1, teiki3)
+        )
+        return (
+            '{"ResultSet":{"Course":{%s"Price":[%s],'
+            '"Route":{"timeOnBoard":"20","timeWalk":"5",'
+            '"Point":[{"Station":{"code":"%s","Name":"%s"}},'
+            '{"Station":{"code":"22361","Name":"中央駅"}}],'
+            '"Line":[{"Name":"サンプルバス・系統１","direction":"Down"%s}]}}}}'
+            % (head, prices, code, name, dep)
+        )
+
+    def target_handler(path, query):
+        if path == "/v1/json/search/course/extreme":
+            return 200, NEW_SEARCH_RESPONSE
+        return 200, edit("1514600", "みどり町／サンプルバス", "9000", "25000")
+
+    c = Common(table=must_table(), candidate_count=1)
+    old_body = edit("841234", "みどり町／サンプルバス※旧", "8550", "25000", old_side=True)
+    c.source_client = Client(start_server(lambda path, query: (200, old_body)), "k")
+    c.target_client = Client(start_server(target_handler), "k")
+
+    res = serialize(c, SerializeInput(id="route-teiki", serialize_data="OLD_SERIALIZED_DATA"))
+
+    assert res.candidates, res.detail
+    cand = res.candidates[0]
+    assert (cand.old_teiki1, cand.new_teiki1) == ("8550", "9000")
+    assert (cand.old_teiki3, cand.new_teiki3) == ("25000", "25000")
+    assert (cand.old_teiki6, cand.new_teiki6) == ("", "")
+    assert cand.teiki_changed == ChangedYes
+    assert "定期代が変わりました (Teiki1: 8550円 → 9000円)" in cand.detail
+
+
+def test_serialize_reports_switch_option_missing(start_server):
+    cand, requests = switch_case(
+        start_server,
+        old_edit_with_fare_options("2", "180"),
+        new_edit_with_fare_options("1", "190", NORMAL_ONLY),
+    )
+
+    assert [p for p, q in requests if p == "/v1/json/course/recalculate"] == []
+    assert cand.new_serialize_data == "NEW_SERIALIZED_DATA"
+    assert (cand.old_fare, cand.new_fare) == ("180", "190")
+    assert cand.fare_changed == ""
+    assert "旧経路の金額種別「ICカード乗車券」が新経路にありません" in cand.detail
+    assert "運賃・料金が変わりました" not in cand.detail
+
+
+def test_serialize_skips_switch_when_selection_matches(start_server):
+    cand, requests = switch_case(
+        start_server,
+        old_edit_with_fare_options("1", "190"),
+        new_edit_with_fare_options("1", "190"),
+    )
+
+    assert [p for p, q in requests if p == "/v1/json/course/recalculate"] == []
+    assert cand.fare_changed == ChangedNo
+    assert "切替状態" not in cand.detail
+
+
+def test_serialize_reports_failed_switch(start_server):
+
+    def target_handler(path, query):
+        if path == "/v1/json/search/course/extreme":
+            return 200, NEW_SEARCH_RESPONSE
+        if path == "/v1/json/course/edit":
+            return 200, new_edit_with_fare_options("1", "190")
+        return 400, "bad request"
+
+    c = Common(table=must_table(), candidate_count=1)
+    old_body = old_edit_with_fare_options("2", "180")
+    c.source_client = Client(start_server(lambda path, query: (200, old_body)), "test-key")
+    c.target_client = Client(start_server(target_handler), "test-key")
+
+    res = serialize(c, SerializeInput(id="route-switch", serialize_data="OLD_SERIALIZED_DATA"))
+
+    assert res.status == StatusCandidate, res.detail
+    cand = res.candidates[0]
+    assert cand.status == StatusCandidate
+    assert cand.new_serialize_data == "NEW_SERIALIZED_DATA"
+    assert cand.fare_changed == ""
+    assert "切替(course/recalculate)に失敗" in cand.detail
+
+
+def test_switch_targets_covers_price_and_pass_status():
+    old = parse_course(
+        {
+            "Price": [
+                {"kind": "Charge", "index": "1", "selected": "false", "Name": "自由席", "Type": "Free"},
+                {"kind": "Charge", "index": "2", "selected": "true", "Name": "グリーン", "Type": "Green"},
+            ],
+            "PassStatus": [
+                {"kind": "vehicle", "index": "1", "selected": "false", "Name": "普通車"},
+                {"kind": "vehicle", "index": "2", "selected": "true", "Name": "グリーン車"},
+            ],
+        }
+    )
+    new = parse_course(
+        {
+            "Price": [
+                {"kind": "Charge", "index": "1", "selected": "true", "Name": "自由席", "Type": "Free"},
+                {"kind": "Charge", "index": "2", "selected": "false", "Name": "グリーン", "Type": "Green"},
+            ],
+            "PassStatus": [
+                {"kind": "vehicle", "index": "1", "selected": "true", "Name": "普通車"},
+                {"kind": "vehicle", "index": "2", "selected": "false", "Name": "グリーン車"},
+            ],
+        }
+    )
+    picked = {}
+    groups = {}
+    for group, param, label, old_entries, new_entries in switch_targets(old, new):
+        indices, notes = switch_indices(old_entries, new_entries, label)
+        assert notes == []
+        if indices:
+            picked[param] = indices
+            groups[param] = group
+    assert picked == {"chargeIndex": ["2"], "vehicleIndex": ["2"]}
+    assert groups == {"chargeIndex": "price", "vehicleIndex": "pass"}
+
+
+def test_switch_indices_maps_sections_in_order():
+
+    def prices(selected_by_section):
+        entries = []
+        for section, selected in enumerate(selected_by_section, start=1):
+            for index, type_ in (("1", "Fare"), ("2", "FareICCard")):
+                entries.append(
+                    {
+                        "kind": "Fare",
+                        "index": "%d%s" % (section, index),
+                        "fromLineIndex": str(section),
+                        "toLineIndex": str(section),
+                        "selected": "true" if index == selected else "false",
+                        "Type": type_,
+                    }
+                )
+        return parse_course({"Price": entries}).price
+
+    indices, notes = switch_indices(prices(["2", "1"]), prices(["1", "1"]), "金額種別")
+    assert (indices, notes) == (["12"], [])
+
+
+def test_switch_indices_gives_up_when_section_count_differs():
+
+    def prices(sections):
+        entries = []
+        for section in range(1, sections + 1):
+            for i, type_ in enumerate(("Fare", "FareICCard"), start=1):
+                entries.append(
+                    {
+                        "kind": "Fare",
+                        "index": "%d%d" % (section, i),
+                        "fromLineIndex": str(section),
+                        "toLineIndex": str(section),
+                        "selected": "true" if type_ == "FareICCard" else "false",
+                        "Type": type_,
+                    }
+                )
+        return parse_course({"Price": entries}).price
+
+    indices, notes = switch_indices(prices(1), prices(2), "金額種別")
+    assert indices == []
+    assert notes == ["金額種別の区間数が新旧で異なるため切替状態を再現できません"]
+
+
+def test_switch_indices_skips_when_the_old_route_has_no_alternatives():
+
+    def prices(sections):
+        entries = [
+            {
+                "kind": "Fare",
+                "index": str(section),
+                "fromLineIndex": str(section),
+                "toLineIndex": str(section),
+                "selected": "true",
+                "Type": "Fare",
+            }
+            for section in range(1, sections + 1)
+        ]
+        return parse_course({"Price": entries}).price
+
+    assert switch_indices(prices(1), prices(4), "金額種別") == ([], [])
+
+
+def test_switch_indices_uses_the_array_position_for_pass_status():
+
+    def statuses(selected, types):
+        return parse_course(
+            {
+                "PassStatus": [
+                    {
+                        "kind": "bycorporation",
+                        "selected": "true" if t == selected else "false",
+                        "fromLineIndex": "1",
+                        "toLineIndex": "1",
+                        "Type": t,
+                        "Name": t,
+                    }
+                    for t in types
+                ]
+            }
+        ).pass_status
+
+    old = statuses("二区間定期", ["ＩＣ金額定期", "二区間定期"])
+    indices, notes = switch_indices(old, statuses("ＩＣ金額定期", ["ＩＣ金額定期", "普通定期"]), "定期券種別")
+    assert indices == []
+    assert notes == ["旧経路の定期券種別「二区間定期」が新経路にありません"]
+
+    new = statuses("ＩＣ金額定期", ["ＩＣ金額定期", "二区間定期"])
+    indices, notes = switch_indices(old, new, "定期券種別")
+    assert indices == ["2"]
+    assert notes == []
+
+
+def test_switch_indices_needs_an_index_to_switch():
+
+    def prices(selected_type, types):
+        entries = []
+        for i, t in enumerate(types, start=1):
+            entries.append(
+                {
+                    "kind": "Fare",
+                    "index": "" if t == "FareICCard" else str(i),
+                    "fromLineIndex": "1",
+                    "toLineIndex": "1",
+                    "selected": "true" if t == selected_type else "false",
+                    "Type": t,
+                }
+            )
+        return parse_course({"Price": entries}).price
+
+    old = prices("FareICCard", ["Fare", "FareICCard"])
+    new = prices("Fare", ["Fare", "FareICCard"])
+    indices, notes = switch_indices(old, new, "金額種別")
+    assert indices == []
+    assert notes == ["金額種別「FareICCard」は切替インデックスを取得できないため再現できません"]
 
 
 def test_serialize_all_candidates_fail(start_server):
@@ -526,3 +863,46 @@ def test_route_diff_is_blank_when_old_code_is_ambiguous():
         )
     )
     assert same_stops(tb, old_route, new_route) == (False, False)
+
+
+PASS_ONLY_FAILURE_OLD = """{"ResultSet":{"Course":{
+  "dataType":"onTimetable",
+  "Price":[
+    {"kind":"FareSummary","Oneway":"190"},
+    {"kind":"Fare","index":"1","selected":"true","Oneway":"190","fromLineIndex":"1","toLineIndex":"1","Type":"Fare"},
+    {"kind":"Teiki1Summary","Oneway":"8550"}
+  ],
+  "PassStatus":[
+    {"kind":"vehicle","selected":"false","Name":"普通","fromLineIndex":"1","toLineIndex":"1"},
+    {"kind":"vehicle","selected":"true","Name":"グリーン","fromLineIndex":"1","toLineIndex":"1"}
+  ],
+  "Route":{"timeOnBoard":"20","timeWalk":"5",
+    "Point":[{"Station":{"code":"841234","Name":"みどり町／サンプルバス※旧"}},
+             {"Station":{"code":"22361","Name":"中央駅"}}],
+    "Line":[{"Name":"サンプルバス※旧・系統１","direction":"Down",
+             "DepartureState":{"Datetime":{"text":"2026-08-02T00:38:00+09:00"}}}]}
+}}}"""
+
+PASS_ONLY_FAILURE_NEW = """{"ResultSet":{"Course":{
+  "Price":[
+    {"kind":"FareSummary","Oneway":"190"},
+    {"kind":"Fare","index":"1","selected":"true","Oneway":"190","fromLineIndex":"1","toLineIndex":"1","Type":"Fare"},
+    {"kind":"Teiki1Summary","Oneway":"9000"}
+  ],
+  "Route":{"timeOnBoard":"20","timeWalk":"5",
+    "Point":[{"Station":{"code":"1514600","Name":"みどり町／サンプルバス"}},
+             {"Station":{"code":"22361","Name":"中央駅"}}],
+    "Line":[{"Name":"サンプルバス・系統１","direction":"Down"}]}
+}}}"""
+
+
+def test_pass_side_failure_does_not_blank_the_fare_judgement(start_server):
+    cand, requests = switch_case(start_server, PASS_ONLY_FAILURE_OLD, PASS_ONLY_FAILURE_NEW)
+
+    assert [p for p, _ in requests if p == "/v1/json/course/recalculate"] == []
+
+    assert (cand.old_fare, cand.new_fare) == ("190", "190")
+    assert cand.fare_changed == ChangedNo
+    assert (cand.old_teiki1, cand.new_teiki1) == ("8550", "9000")
+    assert cand.teiki_changed == ""
+    assert "定期券の車両種別の区間数が新旧で異なる" in cand.detail

@@ -75,6 +75,28 @@ def test_error_body_is_truncated(start_server):
     assert "以下省略" in str(ei.value)
 
 
+def test_course_recalculate_sends_indices(start_server):
+    import json
+
+    seen = []
+
+    def handler(path, query):
+        seen.append((path, query))
+        return 200, json.dumps({"ResultSet": {"Course": [{"SerializeData": "SWITCHED"}]}})
+
+    c = Client(start_server(handler), "key")
+    course = c.course_recalculate("DATA", {"fareIndex": ["2"], "chargeIndex": ["3", "5"]}, True)
+
+    assert course.serialize_data == "SWITCHED"
+    path, query = seen[0]
+    assert path == "/v1/json/course/recalculate"
+    assert query.get("serializeData") == "DATA"
+    assert query.get("checkEngineVersion") == "true"
+    assert query.get("fareIndex") == "2"
+    assert query.get("chargeIndex") == "3:5"
+    assert query.get("addRouteData") == "true"
+
+
 def test_client_keeps_engine_version_from_response(start_server):
     import json
 

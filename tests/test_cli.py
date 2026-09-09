@@ -231,6 +231,13 @@ def test_serialize_output_has_only_current_input_columns(tmp_path, monkeypatch):
         "fare_changed",
         "old_fare",
         "new_fare",
+        "teiki_changed",
+        "old_teiki1",
+        "new_teiki1",
+        "old_teiki3",
+        "new_teiki3",
+        "old_teiki6",
+        "new_teiki6",
         "old_time_min",
         "new_time_min",
     ]
