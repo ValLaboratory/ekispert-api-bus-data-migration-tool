@@ -44,6 +44,13 @@ class SerializeCandidate:
     new_fare: str = ""
     old_time: str = ""
     new_time: str = ""
+    teiki_changed: str = ""
+    old_teiki1: str = ""
+    new_teiki1: str = ""
+    old_teiki3: str = ""
+    new_teiki3: str = ""
+    old_teiki6: str = ""
+    new_teiki6: str = ""
 
 
 @dataclass
@@ -52,6 +59,28 @@ class SerializeResult:
     status: str = ""
     detail: str = ""
     candidates: list = field(default_factory=list)
+
+
+@dataclass
+class Switch:
+    course: object = None  # 切替後の経路。切替が不要だった場合・再現できなかった場合は None
+    labels: list = field(default_factory=list)  # 再現した切替の種類
+    notes: list = field(default_factory=list)  # 再現できなかった理由
+    price_failed: bool = False  # 金額種別・料金種別をそろえられなかった
+    pass_failed: bool = False  # 定期券種別・車両種別をそろえられなかった
+
+
+price_switches = (
+    ("Fare", "fareIndex", "金額種別"),
+    ("Charge", "chargeIndex", "料金種別"),
+)
+TeikiKinds = ("Teiki1", "Teiki3", "Teiki6")
+
+pass_switches = (
+    ("nikukanteiki", "passClassIndex", "定期券種別"),
+    ("bycorporation", "passClassIndex", "定期券種別"),
+    ("vehicle", "vehicleIndex", "定期券の車両種別"),
+)
 
 
 def parse_rfc3339(text):
@@ -144,18 +173,42 @@ def verify_candidate(c, old_course, found, no):
     if not lines_same:
         notes.append("利用路線が変わりました")
 
+    switch = reproduce_selection(c, old_course, new_course, found.serialize_data)
+    priced = new_course
+    if switch.course is not None:
+        priced = switch.course
+        cand.new_serialize_data = switch.course.serialize_data
+    notes.extend(switch.notes)
+
     # 経路が同一でも金額だけ変わる場合を拾えるよう、経路とは独立したフラグにする。
     old_fare, ok1 = old_course.fare_total()
-    if ok1:
-        new_fare, ok2 = new_course.fare_total()
-        if ok2:
-            cand.old_fare = str(old_fare)
-            cand.new_fare = str(new_fare)
+    new_fare, ok2 = priced.fare_total()
+    if ok1 and ok2:
+        cand.old_fare = str(old_fare)
+        cand.new_fare = str(new_fare)
+        if not switch.price_failed:
             if old_fare != new_fare:
                 cand.fare_changed = ChangedYes
                 notes.append("運賃・料金が変わりました (%d円 → %d円)" % (old_fare, new_fare))
             else:
                 cand.fare_changed = ChangedNo
+    teiki = []
+    for kind in TeikiKinds:
+        old_teiki, ok3 = old_course.teiki_total(kind)
+        new_teiki, ok4 = priced.teiki_total(kind)
+        if not (ok3 and ok4):
+            continue
+        setattr(cand, "old_" + kind.lower(), str(old_teiki))
+        setattr(cand, "new_" + kind.lower(), str(new_teiki))
+        teiki.append((kind, old_teiki, new_teiki))
+    if teiki and not switch.pass_failed:
+        moved = [(k, a, b) for k, a, b in teiki if a != b]
+        cand.teiki_changed = ChangedYes if moved else ChangedNo
+        if moved:
+            notes.append(
+                "定期代が変わりました (%s)" % " / ".join("%s: %d円 → %d円" % (k, a, b) for k, a, b in moved)
+            )
+
     old_min, ok1 = old_course.route.total_minutes()
     if ok1:
         new_min, ok2 = new_course.route.total_minutes()
@@ -167,7 +220,125 @@ def verify_candidate(c, old_course, found, no):
         cand.detail = "移行先候補。要確認: " + " / ".join(notes)
     else:
         cand.detail = "移行先候補（元の経路・運賃と実質的な差なし）"
+    if switch.labels:
+        cand.detail += "。旧経路の切替状態（%s）を再現しました" % "・".join(switch.labels)
     return cand
+
+
+def reproduce_selection(c, old_course, new_course, serialize_data):
+    sw = Switch()
+    selections = {}
+    for group, param, label, old_entries, new_entries in switch_targets(old_course, new_course):
+        indices, notes = switch_indices(old_entries, new_entries, label)
+        sw.notes.extend(notes)
+        if notes:
+            if group == "price":
+                sw.price_failed = True
+            else:
+                sw.pass_failed = True
+        if not indices:
+            continue
+        selections.setdefault(param, []).extend(indices)
+        if label not in sw.labels:
+            sw.labels.append(label)
+    if not selections:
+        return sw
+
+    try:
+        switched = c.target_client.course_recalculate(serialize_data, selections, True)
+    except Exception as e:
+        sw.labels = []
+        sw.notes.append("切替(course/recalculate)に失敗: " + str(e))
+        sw.price_failed = True
+        sw.pass_failed = True
+        return sw
+    sw.course = switched
+    return sw
+
+
+def switch_targets(old_course, new_course):
+    targets = []
+    for kind, param, label in price_switches:
+        targets.append(
+            (
+                "price",
+                param,
+                label,
+                [p for p in old_course.price if p.kind == kind],
+                [p for p in new_course.price if p.kind == kind],
+            )
+        )
+    for kind, param, label in pass_switches:
+        targets.append(
+            (
+                "pass",
+                param,
+                label,
+                [s for s in old_course.pass_status if s.kind == kind],
+                [s for s in new_course.pass_status if s.kind == kind],
+            )
+        )
+    return targets
+
+
+def switch_indices(old_entries, new_entries, label):
+    old_sections = group_sections(old_entries)
+    if not old_sections:
+        return [], []
+    if all(len(section) <= 1 for section in old_sections):
+        return [], []
+    new_sections = group_sections(new_entries)
+    if len(old_sections) != len(new_sections):
+        return [], ["%sの区間数が新旧で異なるため切替状態を再現できません" % label]
+
+    indices = []
+    notes = []
+    for old_section, new_section in zip(old_sections, new_sections):
+        want = selected_option(old_section)
+        if want is None or option_key(want) == "":
+            continue
+        current = selected_option(new_section)
+        if current is not None and option_key(current) == option_key(want):
+            continue
+        same = [e for e in new_section if option_key(e) == option_key(want)]
+        if not same:
+            notes.append("旧経路の%s「%s」が新経路にありません" % (label, option_name(want)))
+            continue
+        match = next((e for e in same if e.index), None)
+        if match is None:
+            notes.append(
+                "%s「%s」は切替インデックスを取得できないため再現できません" % (label, option_name(want))
+            )
+            continue
+        indices.append(match.index)
+    return indices, notes
+
+
+def group_sections(entries):
+    order = []
+    groups = {}
+    for e in entries:
+        key = (e.from_line_index, e.to_line_index)
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(e)
+    return [groups[key] for key in order]
+
+
+def selected_option(section):
+    for e in section:
+        if e.selected == "true":
+            return e
+    return None
+
+
+def option_key(entry):
+    return entry.type or entry.name
+
+
+def option_name(entry):
+    return entry.name or entry.type
 
 
 def ambiguous_point_notes(table, codes):

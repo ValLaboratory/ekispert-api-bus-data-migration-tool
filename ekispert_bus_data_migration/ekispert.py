@@ -12,6 +12,7 @@ import urllib.request
 from dataclasses import dataclass, field
 
 course_edit_path = "/v1/json/course/edit"
+course_recalculate_path = "/v1/json/course/recalculate"
 search_course_extreme_path = "/v1/json/search/course/extreme"
 
 request_timeout = 60
@@ -126,8 +127,25 @@ class AssignStatus:
 @dataclass
 class Price:
     kind: str = ""
+    index: str = ""
     selected: str = ""
     oneway: str = ""
+    name: str = ""
+    type: str = ""
+    from_line_index: str = ""
+    to_line_index: str = ""
+    pass_class_index: str = ""
+
+
+@dataclass
+class PassStatus:
+    kind: str = ""
+    index: str = ""
+    selected: str = ""
+    name: str = ""
+    type: str = ""
+    from_line_index: str = ""
+    to_line_index: str = ""
 
 
 @dataclass
@@ -137,6 +155,7 @@ class Course:
     route: Route = field(default_factory=Route)
     assign_status: AssignStatus = field(default_factory=AssignStatus)
     price: list = field(default_factory=list)
+    pass_status: list = field(default_factory=list)
 
     def fare_total(self):
         """片道の運賃(Fare)と料金(Charge)の合計を円で返す。取得できなければ第2戻り値が False。"""
@@ -148,6 +167,16 @@ class Course:
                 total += v
                 found = True
         return total, found
+
+    def teiki_total(self, kind):
+        for p in self.price:
+            if p.kind != kind + "Summary":
+                continue
+            v = parse_int(p.oneway)
+            if v is None:
+                return 0, False
+            return v, True
+        return 0, False
 
     def _price_of(self, kind):
         """指定した種別の片道金額を返す。区間合計(Summary)があればそれを使い、
@@ -239,8 +268,27 @@ def parse_price(obj):
     obj = obj or {}
     return Price(
         kind=obj.get("kind") or "",
+        index=obj.get("index") or "",
         selected=obj.get("selected") or "",
         oneway=obj.get("Oneway") or "",
+        name=obj.get("Name") or "",
+        type=obj.get("Type") or "",
+        from_line_index=obj.get("fromLineIndex") or "",
+        to_line_index=obj.get("toLineIndex") or "",
+        pass_class_index=obj.get("passClassIndex") or "",
+    )
+
+
+def parse_pass_status(obj, position=0):
+    obj = obj or {}
+    return PassStatus(
+        kind=obj.get("kind") or "",
+        index=obj.get("index") or (str(position) if position else ""),
+        selected=obj.get("selected") or "",
+        name=obj.get("Name") or "",
+        type=obj.get("Type") or "",
+        from_line_index=obj.get("fromLineIndex") or "",
+        to_line_index=obj.get("toLineIndex") or "",
     )
 
 
@@ -252,6 +300,7 @@ def parse_course(obj):
         route=parse_route(obj.get("Route")),
         assign_status=parse_assign_status(obj.get("AssignStatus")),
         price=[parse_price(x) for x in _as_list(obj.get("Price"))],
+        pass_status=[parse_pass_status(x, i) for i, x in enumerate(_as_list(obj.get("PassStatus")), 1)],
     )
 
 
@@ -367,6 +416,19 @@ class Client:
         resp = self.get(course_edit_path, params)
         if not resp.result_set.course:
             raise RuntimeError("course/editの結果が空です")
+        return resp.result_set.course[0]
+
+    def course_recalculate(self, serialize_data, selections, check_engine_version):
+        params = {
+            "serializeData": serialize_data,
+            "checkEngineVersion": "true" if check_engine_version else "false",
+            "addRouteData": "true",
+        }
+        for name, indices in selections.items():
+            params[name] = ":".join(indices)
+        resp = self.get(course_recalculate_path, params)
+        if not resp.result_set.course:
+            raise RuntimeError("course/recalculateの結果が空です")
         return resp.result_set.course[0]
 
     def search_course_extreme_all(self, search_params):

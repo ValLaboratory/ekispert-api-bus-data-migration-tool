@@ -12,7 +12,7 @@ from ekispert_bus_data_migration.migrate.common import (
     ChangedYes,
     Common,
     StatusAmbiguous,
-    StatusConverted,
+    StatusCandidate,
     StatusFailed,
     StatusNotTarget,
     StatusNoUpdate,
@@ -161,7 +161,7 @@ def test_verification_uses_same_conditions_as_average_search(table, start_server
 
     c.target_client = Client(start_server(handler), "k")
     res = teiki(c, base_input())
-    assert res.status == StatusConverted, res.detail
+    assert res.status == StatusCandidate, res.detail
 
     average, verify = calls[1], calls[2]
     assert average.get("searchType") == "plain"
@@ -223,9 +223,9 @@ def test_assign_route_is_migrated_without_direction(table, start_server):
             detail_route="みどり町／サンプルバス※旧:サンプルバス※旧・系統１:中央駅",
         ),
     )
-    assert res.status == StatusConverted, res.detail
+    assert res.status == StatusCandidate, res.detail
     # 方向を挟まない形式で組み立て直す
-    assert res.new_detail_route == "みどり町／サンプルバス:サンプルバス・系統１:中央駅"
+    assert res.candidates[0].new_detail_route == "みどり町／サンプルバス:サンプルバス・系統１:中央駅"
     # 入力と同じパラメーターで割り当て確認する（方向ありのパラメーターは使わない）
     for q in (calls[0], calls[2]):
         assert "assignRoute" in q
@@ -250,8 +250,8 @@ def test_assign_route_round_trips_through_split_and_build(table, start_server):
             ),
         ),
     )
-    assert res.status == StatusConverted, res.detail
-    assert res.new_detail_route == (
+    assert res.status == StatusCandidate, res.detail
+    assert res.candidates[0].new_detail_route == (
         "みどり町／サンプルバス:サンプルバス・系統１:こもれび橋／サンプルバス:サンプルバス・系統１:中央駅"
     )
 
@@ -262,21 +262,24 @@ def test_route_changed_is_no_when_only_renamed(table, start_server):
     c = common(table)
     c.target_client = two_phase_client(start_server, calls)
     res = teiki(c, base_input())
-    assert res.status == StatusConverted, res.detail
-    assert res.route_changed == ChangedNo
+    assert res.status == StatusCandidate, res.detail
     assert res.old_route == "みどり町／サンプルバス※旧 →[サンプルバス※旧・系統１]→ 中央駅"
-    assert res.new_route == "みどり町／サンプルバス →[サンプルバス・系統１]→ 中央駅"
+    assert res.candidates[0].route_changed == ChangedNo
+    assert res.candidates[0].new_route == "みどり町／サンプルバス →[サンプルバス・系統１]→ 中央駅"
 
 
-def test_route_changed_is_yes_when_line_differs(table, start_server):
-    """発着が同じでも別路線を通る経路が返りうるため、差分として出す。"""
+def test_line_change_is_presented_as_candidate(table, start_server):
     calls = []
     c = common(table)
     c.target_client = two_phase_client(start_server, calls, line="サンプルバス・系統２")
     res = teiki(c, base_input())
-    assert res.status == StatusConverted, res.detail
-    assert res.route_changed == ChangedYes
-    assert "平均路線名・方向が変わりました" in res.detail
+    assert res.status == StatusCandidate, res.detail
+    assert res.new_detail_route == "", "確定していない以上、行としての移行先は持たない"
+    cand = res.candidates[0]
+    assert cand.no == 1
+    assert cand.status == StatusCandidate
+    assert cand.route_changed == ChangedYes
+    assert "平均路線名・方向が変わりました" in cand.detail
 
 
 def test_malformed_date_is_reported_as_format_error(table):
@@ -317,3 +320,135 @@ def test_empty_origin_or_destination_is_error_before_api(table, start_server, ov
     assert res.status == StatusFailed, res.detail
     assert expected in res.detail
     assert calls == []
+
+
+def multi_client(start_server, calls, routes, verify_ok=None):
+    first = {"done": False}
+
+    def handler(path, query):
+        calls.append(query)
+        if assign_param(query):
+            route = {"Route": route_json(*routes[0])}
+            if not first["done"]:
+                first["done"] = True
+                route["AssignStatus"] = {"code": "0", "requireUpdate": "1"}
+            else:
+                given = query.get("assignDetailRoute", query.get("assignRoute", ""))
+                ok = verify_ok is None or verify_ok(given)
+                route["AssignStatus"] = {"code": "0", "requireUpdate": "0" if ok else "1"}
+            return 200, json.dumps({"ResultSet": {"Course": route}})
+        courses = [{"Route": route_json(names, line=line)} for names, line in routes]
+        return 200, json.dumps({"ResultSet": {"Course": courses}})
+
+    return Client(start_server(handler), "k")
+
+
+def route_of(line, names=None):
+    return (names or ["みどり町／サンプルバス", "中央駅"], line)
+
+
+def test_exact_match_below_the_first_answer_is_adopted(table, start_server):
+    calls = []
+    c = common(table)
+    c.target_client = multi_client(
+        start_server,
+        calls,
+        [route_of("サンプルバス・系統２"), route_of("サンプルバス・系統１")],
+    )
+    res = teiki(c, base_input())
+    assert res.status == StatusCandidate, res.detail
+    assert [x.route_changed for x in res.candidates] == [ChangedYes, ChangedNo]
+    assert res.candidates[1].new_detail_route == "みどり町／サンプルバス:サンプルバス・系統１:Down:中央駅"
+    assert "変化なし" in res.detail, "一致した候補があることが分からないと選べない"
+    assert len(calls) == 4
+
+
+def test_exact_match_that_fails_verification_is_dropped_from_the_candidates(table, start_server):
+    calls = []
+    attempts = {"n": 0}
+
+    def fails_only_the_first(given):
+        attempts["n"] += 1
+        return attempts["n"] > 1
+
+    c = common(table)
+    c.target_client = multi_client(
+        start_server,
+        calls,
+        [route_of("サンプルバス・系統１"), route_of("サンプルバス・系統１")],
+        verify_ok=fails_only_the_first,
+    )
+    res = teiki(c, base_input())
+    assert res.status == StatusCandidate, res.detail
+    assert attempts["n"] == 2, "候補は全件動作確認する"
+    assert [x.status for x in res.candidates] == [StatusFailed, StatusCandidate]
+    assert "1件の移行先候補" in res.detail
+
+
+def test_candidates_are_presented_when_no_exact_match(table, start_server):
+    calls = []
+    c = common(table)
+    c.target_client = multi_client(
+        start_server,
+        calls,
+        [
+            route_of("サンプルバス・系統２"),
+            route_of("サンプルバス・系統３"),
+            route_of("サンプルバス・系統４"),
+        ],
+    )
+    res = teiki(c, base_input())
+    assert res.status == StatusCandidate, res.detail
+    assert [cd.no for cd in res.candidates] == [1, 2, 3]
+    assert all(cd.status == StatusCandidate for cd in res.candidates)
+    assert all(cd.route_changed == ChangedYes for cd in res.candidates)
+    assert res.candidates[1].new_detail_route == "みどり町／サンプルバス:サンプルバス・系統３:Down:中央駅"
+    assert len(calls) == 5
+
+
+def test_unusable_first_candidate_does_not_hide_a_usable_one(table, start_server):
+    calls = []
+    c = common(table)
+    c.target_client = multi_client(
+        start_server,
+        calls,
+        [route_of("サンプルバス・系統２"), route_of("サンプルバス・系統３")],
+        verify_ok=lambda given: "系統２" not in given,
+    )
+    res = teiki(c, base_input())
+    assert res.status == StatusCandidate, res.detail
+    assert res.candidates[0].status == StatusFailed
+    assert "requireUpdate=1" in res.candidates[0].detail
+    assert res.candidates[0].new_detail_route == "", "確認できていない文字列は出力しない"
+    assert res.candidates[1].status == StatusCandidate
+    assert "1件の移行先候補" in res.detail
+
+
+def test_all_candidates_unusable_is_error_with_the_reason(table, start_server):
+    calls = []
+    c = common(table)
+    c.target_client = multi_client(
+        start_server,
+        calls,
+        [route_of("サンプルバス・系統２"), route_of("サンプルバス・系統３")],
+        verify_ok=lambda given: False,
+    )
+    res = teiki(c, base_input())
+    assert res.status == StatusFailed, res.detail
+    assert "候補2件" in res.detail
+    assert res.detail.count("requireUpdate=1") == 1
+    assert [cd.status for cd in res.candidates] == [StatusFailed, StatusFailed]
+
+
+def test_average_search_asks_for_the_requested_candidate_count(table, start_server):
+    calls = []
+    c = Common(table=table, candidate_count=2, config=Config(target_data_start_date="20300115"))
+    c.target_client = multi_client(
+        start_server,
+        calls,
+        [route_of("サンプルバス・系統２"), route_of("サンプルバス・系統３")],
+    )
+    teiki(c, base_input())
+    average = calls[1]
+    assert average.get("answerCount") == "2"
+    assert average.get("searchCount") == "5", "候補が少なくても探索する経路は絞りすぎない"

@@ -7,7 +7,13 @@ from types import SimpleNamespace
 import pytest
 
 from ekispert_bus_data_migration import mapping
-from ekispert_bus_data_migration.cli import cmd_run, parse_args, prepare_output, run_serialize
+from ekispert_bus_data_migration.cli import (
+    cmd_run,
+    parse_args,
+    prepare_output,
+    run_serialize,
+    run_teiki,
+)
 from ekispert_bus_data_migration.discover import discover_mapping, looks_like_mapping
 from ekispert_bus_data_migration.outputs import output_station
 from ekispert_bus_data_migration.ui import Reporter, _is_terminal, progressInterval
@@ -231,6 +237,13 @@ def test_serialize_output_has_only_current_input_columns(tmp_path, monkeypatch):
         "fare_changed",
         "old_fare",
         "new_fare",
+        "teiki_changed",
+        "old_teiki1",
+        "new_teiki1",
+        "old_teiki3",
+        "new_teiki3",
+        "old_teiki6",
+        "new_teiki6",
         "old_time_min",
         "new_time_min",
     ]
@@ -436,3 +449,102 @@ def test_summary_records_engine_version_with_run_conditions(tmp_path, monkeypatc
     assert all(i == profile_line + n + 1 for n, i in enumerate(engine)), (
         "移行プロファイルの直後に並んでいない: %r" % lines
     )
+
+
+TEIKI_ROW = {
+    "id": "t1",
+    "origin": "1",
+    "destination": "2",
+    "date": "20300201",
+    "detail_route": "A:L:Down:B",
+}
+
+
+def fake_teiki_result(status, detail, candidates, **kw):
+    base = {
+        "id": "t1",
+        "status": status,
+        "detail": detail,
+        "new_detail_route": "",
+        "route_changed": "",
+        "old_route": "A →[L]→ B",
+        "new_route": "",
+        "candidates": candidates,
+    }
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def fake_candidate(no, status, detail, new_detail_route, new_route):
+    return SimpleNamespace(
+        no=no,
+        status=status,
+        detail=detail,
+        new_detail_route=new_detail_route,
+        route_changed="変化あり",
+        new_route=new_route,
+    )
+
+
+def run_fake_teiki(tmp_path, monkeypatch, result, access_key=""):
+    monkeypatch.setattr("ekispert_bus_data_migration.cli.teiki", lambda common, inp: result)
+    out = str(tmp_path / "out.csv")
+    rep = run_teiki(None, [dict(TEIKI_ROW)], out, access_key)
+
+    from ekispert_bus_data_migration import csvio
+
+    return csvio.read_input(out), rep
+
+
+def test_teiki_candidates_are_written_one_row_each(tmp_path, monkeypatch):
+    result = fake_teiki_result(
+        "移行先の候補",
+        "2件の候補を提示しました",
+        [
+            fake_candidate(1, "移行先の候補", "候補1", "A:L1:Down:B", "A →[L1]→ B"),
+            fake_candidate(2, "エラー", "候補2は割り当て不可", "", "A →[L2]→ B"),
+        ],
+    )
+    written, rep = run_fake_teiki(tmp_path, monkeypatch, result)
+
+    assert written.header[:4] == ["id", "candidate_no", "status", "detail"]
+    assert [r["candidate_no"] for r in written.rows] == ["1", "2"]
+    assert [r["status"] for r in written.rows] == ["移行先の候補", "エラー"]
+    assert [r["new_detail_route"] for r in written.rows] == ["A:L1:Down:B", ""]
+    assert all(r["detail_route"] == "A:L:Down:B" for r in written.rows)
+    assert all(r["old_route"] == "A →[L]→ B" for r in written.rows)
+    assert rep.written == 2
+
+
+def test_teiki_decided_row_stays_one_row(tmp_path, monkeypatch):
+    result = fake_teiki_result(
+        "変換済み",
+        "新しい定期経路文字列の動作確認まで完了",
+        [],
+        new_detail_route="A:L1:Down:B",
+        route_changed="変化なし",
+        new_route="A →[L1]→ B",
+    )
+    written, rep = run_fake_teiki(tmp_path, monkeypatch, result)
+
+    assert len(written.rows) == 1
+    assert written.rows[0]["candidate_no"] == ""
+    assert written.rows[0]["new_detail_route"] == "A:L1:Down:B"
+    assert rep.written == 1
+
+
+def test_teiki_candidate_detail_hides_the_access_key(tmp_path, monkeypatch):
+    result = SimpleNamespace(
+        id="t1",
+        status="移行先の候補",
+        detail="1件の移行先候補を提示しました",
+        new_detail_route="",
+        route_changed="",
+        old_route="A →[L]→ B",
+        new_route="",
+        candidates=[fake_candidate(1, "エラー", "動作確認に失敗: https://x/v1?key=SECRET", "", "A →[L1]→ B")],
+    )
+    written, _rep = run_fake_teiki(tmp_path, monkeypatch, result, access_key="SECRET")
+
+    assert "SECRET" not in written.rows[0]["detail"]
+    assert "***" in written.rows[0]["detail"]
